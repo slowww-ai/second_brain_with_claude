@@ -1,0 +1,126 @@
+flowchart TB
+    subgraph Capture["1. CAPTURE (zero friction)"]
+        U1[You]
+        URL[URL pasted in chat]
+        FILE[Markdown / image / PDF<br/>dropped in folder]
+        OBS[Obsidian quick note]
+    end
+
+    subgraph Raw["wiki/raw/ — append-only"]
+        RM[".md captures"]
+        RI[".png / .jpg images"]
+        RP[".pdf files"]
+        RC["*.md companions<br/>(for images/pdfs)"]
+    end
+
+    JINA[["jina-capture skill<br/>fetches r.jina.ai/&lt;url&gt;<br/>→ stamped .md"]]
+
+    subgraph Ingest["2. INGEST  (/ingest slash command)"]
+        LN["ingest.py list-new<br/>(hash vs ledger)"]
+        READ["Claude reads raw file<br/>• &lt;500 lines: full read<br/>• 500–2000: full, aggressive<br/>• &gt;2000: structured skim<br/>• images/PDFs: native"]
+        COMP["Create companion .md<br/>for images & PDFs"]
+        SEARCH1["scripts/search.py<br/>find related notes"]
+        DECIDE{"Existing note<br/>matches concept?"}
+        APPEND["Append distilled paragraph<br/>+ cite raw/&lt;file&gt;"]
+        CREATE["Create new note with<br/>frontmatter + [[wikilinks]]"]
+        REC["ingest.py record<br/>→ ingested ledger"]
+    end
+
+    subgraph Notes["wiki/notes/ — the wiki"]
+        N1["note-a.md"]
+        N2["note-b.md"]
+        N3["note-c.md"]
+        N1 -.-> N2
+        N2 -.-> N3
+        N3 -.-> N1
+    end
+
+    HOOK[["PostToolUse hook<br/>auto-runs reindex.py<br/>on Write/Edit to notes/"]]
+
+    subgraph Reindex["reindex.py"]
+        RPARSE["Parse frontmatter,<br/>body, [[wikilinks]]"]
+        RDIFF["mtime diff vs note_meta<br/>→ only changed notes"]
+        REMB["Gemini embed_content<br/>gemini-embedding-2-preview"]
+        RUP["Upsert to LanceDB<br/>Rebuild links table"]
+    end
+
+    subgraph Store["Storage"]
+        LDB[("wiki/lancedb/<br/>table: notes<br/>id, body, tags, vector")]
+        SDB[("wiki/index.db<br/>links<br/>ingested ledger<br/>note_meta (mtime)")]
+    end
+
+    subgraph Retrieve["3. RETRIEVE  (/brief slash command)"]
+        ASK["AskUserQuestion:<br/>audience, length, format"]
+        QEMB["Embed query<br/>(Gemini)"]
+        VSEARCH["LanceDB ANN search<br/>→ top-k notes"]
+        BL["SQLite backlinks<br/>one hop"]
+        READN["Claude reads<br/>top hits in full"]
+        DRAFT["Draft brief in<br/>wiki/outputs/"]
+        RENDER{"Output<br/>format?"}
+        MD["markdown"]
+        DOCX[["docx skill"]]
+        PDF[["pdf skill"]]
+        PPTX[["pptx skill"]]
+    end
+
+    OUT[("wiki/outputs/<br/>final deliverables")]
+
+    subgraph Garden["4. GARDEN  (/garden, weekly)"]
+        ORPH["Find orphans"]
+        DUP["Near-duplicates"]
+        BROK["Broken links"]
+        STALE["Stale drafts"]
+        MOC["Propose MOC notes"]
+    end
+
+    SCHED[["schedule skill<br/>nightly /ingest<br/>weekly /garden<br/>Mon digest brief"]]
+
+    U1 --> URL --> JINA --> RM
+    U1 --> FILE --> RM
+    U1 --> FILE --> RI
+    U1 --> FILE --> RP
+    U1 --> OBS --> RM
+
+    LN --> READ
+    RI --> COMP
+    RP --> COMP
+    COMP --> RC --> READ
+    RM --> READ
+    READ --> SEARCH1 --> DECIDE
+    DECIDE -- yes --> APPEND --> N1
+    DECIDE -- no  --> CREATE --> N2
+    APPEND --> REC
+    CREATE --> REC
+    REC --> SDB
+
+    N1 -->|triggers| HOOK
+    N2 -->|triggers| HOOK
+    HOOK --> Reindex
+    RPARSE --> RDIFF --> REMB --> RUP
+    RUP --> LDB
+    RUP --> SDB
+
+    ASK --> QEMB --> VSEARCH --> LDB
+    VSEARCH --> BL --> SDB
+    BL --> READN --> DRAFT --> RENDER
+    RENDER --> MD --> OUT
+    RENDER --> DOCX --> OUT
+    RENDER --> PDF --> OUT
+    RENDER --> PPTX --> OUT
+
+    Notes --> Garden
+    Garden -.-> Notes
+
+    SCHED -.-> Ingest
+    SCHED -.-> Garden
+    SCHED -.-> Retrieve
+
+    SEARCH1 -.reads.-> LDB
+    VSEARCH -.reads.-> LDB
+
+    classDef store fill:#fef3c7,stroke:#d97706,color:#000
+    classDef tool fill:#dbeafe,stroke:#2563eb,color:#000
+    classDef user fill:#dcfce7,stroke:#16a34a,color:#000
+    class LDB,SDB,OUT,RM,RI,RP,RC,N1,N2,N3 store
+    class JINA,HOOK,SCHED,DOCX,PDF,PPTX tool
+    class U1 user
